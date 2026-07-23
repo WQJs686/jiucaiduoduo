@@ -1,0 +1,134 @@
+{
+  "name": "a-share-quotes",
+  "displayName": "拔韭菜",
+  "description": "在 VS Code 状态栏和侧边栏查看股票与可转债实时行情。",
+  "version": "0.2.8",
+  "publisher": "wangqj",
+  "icon": "resources/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onView:aShareQuotes.watchlist"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "aShareQuotes.refresh", "title": "拔韭菜: 立即刷新", "icon": "$(refresh)" },
+      { "command": "aShareQuotes.addStock", "title": "拔韭菜: 添加股票", "icon": "$(add)" },
+      { "command": "aShareQuotes.addGroup", "title": "拔韭菜: 新增分组", "icon": "$(new-folder)" },
+      { "command": "aShareQuotes.sortGroup", "title": "拔韭菜: 切换涨跌幅排序" },
+      { "command": "aShareQuotes.sortGroupManual", "title": "当前：默认顺序（点击按涨幅降序）", "icon": "$(list-ordered)" },
+      { "command": "aShareQuotes.sortGroupDesc", "title": "当前：涨幅从高到低（点击按涨幅升序）", "icon": "$(arrow-down)" },
+      { "command": "aShareQuotes.sortGroupAsc", "title": "当前：涨幅从低到高（点击恢复默认）", "icon": "$(arrow-up)" },
+      { "command": "aShareQuotes.addToGroup", "title": "拔韭菜: 添加到分组…", "icon": "$(folder-library)" },
+      { "command": "aShareQuotes.deleteGroup", "title": "拔韭菜: 删除分组", "icon": "$(trash)" },
+      { "command": "aShareQuotes.removeStock", "title": "拔韭菜: 删除自选证券", "icon": "$(trash)" },
+      { "command": "aShareQuotes.selectStatusStock", "title": "拔韭菜: 固定到状态栏", "icon": "$(pin)" },
+      { "command": "aShareQuotes.unpinStatusStock", "title": "拔韭菜: 取消状态栏固定", "icon": "$(pinned)" },
+      { "command": "aShareQuotes.moveUp", "title": "拔韭菜: 向上移动一级", "icon": "$(arrow-up)" },
+      { "command": "aShareQuotes.moveDown", "title": "拔韭菜: 向下移动一级", "icon": "$(arrow-down)" },
+      { "command": "aShareQuotes.moveTop", "title": "拔韭菜: 置顶", "icon": "$(fold-up)" },
+      { "command": "aShareQuotes.moveBottom", "title": "拔韭菜: 置底", "icon": "$(fold-down)" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "aShareQuotes", "title": "拔韭菜", "icon": "resources/activity.svg" }
+      ]
+    },
+    "views": {
+      "aShareQuotes": [
+        { "id": "aShareQuotes.watchlist", "name": "自选股" }
+      ]
+    },
+    "menus": {
+      "commandPalette": [
+        { "command": "aShareQuotes.sortGroupManual", "when": "false" },
+        { "command": "aShareQuotes.sortGroupDesc", "when": "false" },
+        { "command": "aShareQuotes.sortGroupAsc", "when": "false" }
+      ],
+      "view/title": [
+        { "command": "aShareQuotes.addGroup", "when": "view == aShareQuotes.watchlist", "group": "navigation@1" },
+        { "command": "aShareQuotes.addStock", "when": "view == aShareQuotes.watchlist", "group": "navigation@2" },
+        { "command": "aShareQuotes.refresh", "when": "view == aShareQuotes.watchlist", "group": "navigation@3" }
+      ],
+      "view/item/context": [
+        { "command": "aShareQuotes.sortGroupManual", "when": "view == aShareQuotes.watchlist && viewItem =~ /^(defaultGroup|customGroup)\\.manual$/", "group": "inline@1" },
+        { "command": "aShareQuotes.sortGroupDesc", "when": "view == aShareQuotes.watchlist && viewItem =~ /^(defaultGroup|customGroup)\\.changeDesc$/", "group": "inline@1" },
+        { "command": "aShareQuotes.sortGroupAsc", "when": "view == aShareQuotes.watchlist && viewItem =~ /^(defaultGroup|customGroup)\\.changeAsc$/", "group": "inline@1" },
+        { "command": "aShareQuotes.addStock", "when": "view == aShareQuotes.watchlist && viewItem =~ /^(defaultGroup|customGroup)\\./", "group": "inline" },
+        { "command": "aShareQuotes.addStock", "when": "view == aShareQuotes.watchlist && viewItem =~ /^(defaultGroup|customGroup)\\./", "group": "1_group@1" },
+        { "command": "aShareQuotes.selectStatusStock", "when": "view == aShareQuotes.watchlist && viewItem == quote", "group": "inline" },
+        { "command": "aShareQuotes.unpinStatusStock", "when": "view == aShareQuotes.watchlist && viewItem == quotePinned", "group": "inline" },
+        { "command": "aShareQuotes.removeStock", "when": "view == aShareQuotes.watchlist && viewItem =~ /^quote(Pinned)?$/", "group": "inline" },
+        { "command": "aShareQuotes.addToGroup", "when": "view == aShareQuotes.watchlist && viewItem =~ /^quote(Pinned)?$/", "group": "2_group" },
+        { "command": "aShareQuotes.removeStock", "when": "view == aShareQuotes.watchlist && viewItem =~ /^quote(Pinned)?$/", "group": "9_delete" },
+        { "command": "aShareQuotes.deleteGroup", "when": "view == aShareQuotes.watchlist && viewItem =~ /^customGroup\\./", "group": "9_delete" },
+        { "command": "aShareQuotes.moveTop", "when": "view == aShareQuotes.watchlist && viewItem =~ /^quote(Pinned)?$/", "group": "1_order@1" },
+        { "command": "aShareQuotes.moveUp", "when": "view == aShareQuotes.watchlist && viewItem =~ /^quote(Pinned)?$/", "group": "1_order@2" },
+        { "command": "aShareQuotes.moveDown", "when": "view == aShareQuotes.watchlist && viewItem =~ /^quote(Pinned)?$/", "group": "1_order@3" },
+        { "command": "aShareQuotes.moveBottom", "when": "view == aShareQuotes.watchlist && viewItem =~ /^quote(Pinned)?$/", "group": "1_order@4" }
+      ]
+    },
+    "configuration": {
+      "title": "拔韭菜",
+      "properties": {
+        "aShareQuotes.symbols": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^(sh|sz|bj)?[0-9]{6}$" },
+          "default": ["sh000001", "sz399001", "sh600519"],
+          "description": "自选股代码，可填写 600519 或 sh600519。"
+        },
+        "aShareQuotes.groups": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^(sh|sz|bj)?[0-9]{6}$" }
+          },
+          "description": "自定义自选分组及其证券代码。新搜索添加的证券默认进入“我的自选”。"
+        },
+        "aShareQuotes.groupSorts": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["manual", "changeDesc", "changeAsc"]
+          },
+          "description": "各自选分组独立使用的排序方式。"
+        },
+        "aShareQuotes.refreshInterval": {
+          "type": "number",
+          "default": 3,
+          "minimum": 3,
+          "maximum": 300,
+          "description": "自动刷新间隔（秒）。"
+        },
+        "aShareQuotes.statusBarSymbols": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^(sh|sz|bj)?[0-9]{6}$" },
+          "default": ["sh000001"],
+          "maxItems": 5,
+          "description": "在状态栏固定显示的证券代码，最多 5 个。"
+        },
+        "aShareQuotes.statusBarSymbol": {
+          "type": "string",
+          "default": "sh000001",
+          "description": "旧版单个状态栏证券代码。",
+          "deprecationMessage": "请改用拔韭菜: Status Bar Symbols，可固定最多 5 个证券。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "check": "tsc -p ./ --noEmit",
+    "package": "npx @vscode/vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  },
+  "license": "MIT"
+}
