@@ -103,21 +103,21 @@ function groupSortsTarget(config: vscode.WorkspaceConfiguration): vscode.Configu
 
 class QuoteItem extends vscode.TreeItem {
   constructor(public readonly quote: Quote, phase: MarketPhase, public readonly groupId: string, pinned = false) {
-    super(fixedNameColumn(quote.name), vscode.TreeItemCollapsibleState.None);
-    this.id = `${groupId}:${quote.symbol}`;
     const price = displayPrice(quote, phase);
     const change = quote.previousClose ? (price - quote.previousClose) / quote.previousClose * 100 : 0;
+    const changeText = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+    const changeColumn = changeText.padEnd(8, FIGURE_SPACE);
+    super(`${changeColumn}${EN_SPACE}${fixedNameColumn(quote.name)}`, vscode.TreeItemCollapsibleState.None);
+    this.id = `${groupId}:${quote.symbol}`;
     const code = quote.symbol.slice(2);
-    const auction = phase === 'call-auction' ? '  竞价' : phase === 'pre-open' ? '  待开盘' : '';
-    const priceLabel = phase === 'call-auction' ? '竞价参考价' : phase === 'pre-open' ? '开盘竞价价' : phase === 'closed' ? '最新收盘' : '显示价';
+    const priceLabel = phase === 'closed' ? '最新收盘' : '当前价';
     const priceColumn = fixedNumberColumn(price.toFixed(2), 8);
-    const changeColumn = fixedNumberColumn(`${change >= 0 ? '+' : ''}${change.toFixed(2)}%`, 8);
     // Keep the whole row compact: six code digits sit in an 11-digit-wide
     // centered column, which places the change near 90% of a typical sidebar.
     const codeColumnWidth = 11;
     const codePadding = codeColumnWidth - code.length;
     const codeColumn = `${FIGURE_SPACE.repeat(Math.floor(codePadding / 2))}${code}${FIGURE_SPACE.repeat(Math.ceil(codePadding / 2))}`;
-    this.description = `${priceColumn}${FIGURE_SPACE.repeat(2)}${codeColumn}${changeColumn}${auction}`;
+    this.description = `${priceColumn}${FIGURE_SPACE.repeat(2)}${codeColumn}`;
     this.tooltip = new vscode.MarkdownString([
       `**${quote.name} (${quote.symbol})**`, '',
       `${priceLabel}：${price.toFixed(2)}  `,
@@ -135,8 +135,10 @@ class QuoteItem extends vscode.TreeItem {
 
 class GroupItem extends vscode.TreeItem {
   constructor(public readonly groupId: string, public readonly symbols: string[], public readonly sortMode: SortMode, isDefault = false) {
-    super(isDefault ? DEFAULT_GROUP_LABEL : groupId, vscode.TreeItemCollapsibleState.Expanded);
-    this.id = `group:${groupId}`;
+    super(isDefault ? DEFAULT_GROUP_LABEL : groupId, vscode.TreeItemCollapsibleState.Collapsed);
+    // Bump the tree identity once so upgrades do not restore the old
+    // all-expanded state cached by VS Code.
+    this.id = `group:collapsed:${groupId}`;
     this.description = `${symbols.length}`;
     this.contextValue = `${isDefault ? 'defaultGroup' : 'customGroup'}.${sortMode}`;
     this.iconPath = new vscode.ThemeIcon(isDefault ? 'star-full' : 'folder');
@@ -312,17 +314,10 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       const price = displayPrice(quote, phase);
       const change = quote.previousClose ? (price - quote.previousClose) / quote.previousClose * 100 : 0;
-      const phaseMark = phase === 'call-auction' ? '竞 ' : phase === 'pre-open' ? '开 ' : '';
-      const phaseTip = phase === 'call-auction'
-        ? `集合竞价 · 参考价 ${price.toFixed(2)}`
-        : phase === 'pre-open'
-          ? `等待开盘 · 竞价结果 ${price.toFixed(2)}`
-          : phase === 'continuous'
-            ? `实时行情 · ${quote.time}`
-            : `非交易时段 · 最新收盘 ${price.toFixed(2)}`;
+      const phaseTip = `${quote.date} ${quote.time} · 当前价 ${price.toFixed(2)}`;
       const command = { command: 'aShareQuotes.openStockDetail', title: '查看实时行情', arguments: [quote] };
       const tooltip = `${phaseTip}\n点击查看分时和 K 线`;
-      status.main.text = `${phaseMark}${quote.name} ${price.toFixed(2)}`;
+      status.main.text = `${quote.name} ${price.toFixed(2)}`;
       status.main.tooltip = tooltip;
       status.main.command = command;
       status.main.color = new vscode.ThemeColor('statusBar.foreground');
