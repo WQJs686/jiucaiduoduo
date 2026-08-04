@@ -2,7 +2,7 @@
   "name": "a-share-quotes",
   "displayName": "拔韭菜",
   "description": "在 VS Code 状态栏和侧边栏查看股票与可转债实时行情。",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "publisher": "wangqj",
   "icon": "resources/icon.png",
   "engines": {

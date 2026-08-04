@@ -1,21 +1,29 @@
 import * as vscode from 'vscode';
 import { Candle, CandlePeriod, fetchCandles, fetchIntraday, MinutePoint } from './history';
-import { fetchQuotes, fetchStockConcepts, marketPhase, MarketPhase, Quote } from './market';
+import { fetchOrderBook, fetchQuotes, fetchStockConcepts, marketPhase, MarketPhase, OrderBook, OrderBookLevel, Quote } from './market';
 
 type Period = 'minute' | 'fiveDay' | CandlePeriod;
 type ChartData = { candles?: Candle[]; points?: MinutePoint[]; previousClose?: number };
 
 const REFRESH_INTERVAL_MS = 10_000;
+const ORDER_BOOK_REFRESH_INTERVAL_MS = 3_000;
+const ORDER_BOOK_MAX_RETRY_MS = 60_000;
 
 export class StockDetailPanel {
   private static current: StockDetailPanel | undefined;
   private readonly panel: vscode.WebviewPanel;
   private readonly timer: NodeJS.Timeout;
+  private readonly orderBookTimer: NodeJS.Timeout;
   private period: Period = 'minute';
   private requestId = 0;
   private concepts?: string[];
   private conceptsSymbol?: string;
   private conceptsPromise?: Promise<void>;
+  private orderBook?: OrderBook;
+  private orderBookSymbol?: string;
+  private orderBookPromise?: Promise<void>;
+  private orderBookFailures = 0;
+  private orderBookRetryAfter = 0;
 
   static show(extensionUri: vscode.Uri, quote: Quote): void {
     void extensionUri;
@@ -27,6 +35,11 @@ export class StockDetailPanel {
         existing.concepts = undefined;
         existing.conceptsSymbol = undefined;
         existing.conceptsPromise = undefined;
+        existing.orderBook = undefined;
+        existing.orderBookSymbol = undefined;
+        existing.orderBookPromise = undefined;
+        existing.orderBookFailures = 0;
+        existing.orderBookRetryAfter = 0;
       }
       existing.panel.title = `${quote.name} · 行情`;
       existing.panel.reveal(vscode.ViewColumn.One);
@@ -43,6 +56,7 @@ export class StockDetailPanel {
     this.current = detail;
     panel.onDidDispose(() => {
       clearInterval(detail.timer);
+      clearInterval(detail.orderBookTimer);
       if (this.current === detail) this.current = undefined;
     });
     void detail.load('minute');
@@ -58,6 +72,9 @@ export class StockDetailPanel {
     this.timer = setInterval(() => {
       if (this.panel.visible) void this.load(this.period, false);
     }, REFRESH_INTERVAL_MS);
+    this.orderBookTimer = setInterval(() => {
+      if (this.panel.visible && marketPhase() !== 'closed') void this.loadOrderBook(true);
+    }, ORDER_BOOK_REFRESH_INTERVAL_MS);
   }
 
   private async load(period: Period, showLoading = true): Promise<void> {
@@ -72,6 +89,7 @@ export class StockDetailPanel {
       })
       .catch(() => undefined);
     const conceptsPromise = this.loadConcepts();
+    const orderBookPromise = this.loadOrderBook();
     try {
       let chartData: ChartData;
       if (period === 'minute' || period === 'fiveDay') {
@@ -84,12 +102,14 @@ export class StockDetailPanel {
       }
       await quotePromise;
       await conceptsPromise;
+      await orderBookPromise;
       if (requestId !== this.requestId) return;
       this.panel.title = `${this.quote.name} · 行情`;
       this.panel.webview.html = this.html(period, chartData);
     } catch (error) {
       await quotePromise;
       await conceptsPromise;
+      await orderBookPromise;
       if (requestId !== this.requestId) return;
       this.panel.webview.html = this.html(period, {}, error instanceof Error ? error.message : String(error));
     }
@@ -111,6 +131,51 @@ export class StockDetailPanel {
       this.conceptsPromise = request;
     }
     return this.conceptsPromise;
+  }
+
+  private loadOrderBook(forceRefresh = false): Promise<void> {
+    const symbol = this.quote.symbol;
+    if (!forceRefresh && this.orderBookSymbol === symbol && this.orderBook !== undefined) return Promise.resolve();
+    if (this.orderBookSymbol !== symbol) {
+      this.orderBook = undefined;
+      this.orderBookSymbol = symbol;
+      this.orderBookPromise = undefined;
+      this.orderBookFailures = 0;
+      this.orderBookRetryAfter = 0;
+    }
+    if (forceRefresh && Date.now() < this.orderBookRetryAfter) return Promise.resolve();
+    if (!this.orderBookPromise) {
+      const request = fetchOrderBook(symbol)
+        .then(value => {
+          if (this.orderBookSymbol !== symbol) return;
+          this.orderBook = value;
+          this.orderBookFailures = 0;
+          this.orderBookRetryAfter = 0;
+          this.updateOrderBookView();
+        })
+        .catch(() => {
+          if (this.orderBookSymbol !== symbol) return;
+          if (this.orderBook === undefined) this.orderBook = { bids: [], asks: [], currentPrice: 0, time: '' };
+          this.orderBookFailures += 1;
+          const retryDelay = Math.min(
+            ORDER_BOOK_MAX_RETRY_MS,
+            ORDER_BOOK_REFRESH_INTERVAL_MS * 2 ** Math.min(this.orderBookFailures, 5)
+          );
+          this.orderBookRetryAfter = Date.now() + retryDelay;
+          this.updateOrderBookView();
+        })
+        .finally(() => { if (this.orderBookPromise === request) this.orderBookPromise = undefined; });
+      this.orderBookPromise = request;
+    }
+    return this.orderBookPromise;
+  }
+
+  private updateOrderBookView(): void {
+    if (!this.panel.visible) return;
+    void this.panel.webview.postMessage({
+      type: 'orderBook',
+      html: renderOrderBook(this.orderBook, this.quote.previousClose, this.quote.current)
+    });
   }
 
   private mergeCurrentDay(candles: Candle[], quote = this.quote): void {
@@ -137,6 +202,7 @@ export class StockDetailPanel {
     const phaseText = marketPhaseText(phase);
     const timeText = `${this.quote.date.slice(5)} ${this.quote.time} 北京时间`;
     const conceptText = this.concepts === undefined ? '题材加载中…' : this.concepts.length ? this.concepts.join(' · ') : '暂无题材';
+    const orderBookHtml = renderOrderBook(this.orderBook, this.quote.previousClose, this.quote.current);
     const data = JSON.stringify(chartData).replace(/</g, '\\u003c');
     const nameData = JSON.stringify(this.quote.name).replace(/</g, '\\u003c');
     return `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -145,22 +211,24 @@ export class StockDetailPanel {
 :root{--rise:#f04438;--fall:#079447;--gold:#f2b800;--purple:#8b5cf6;--blue:#4f70d9;--lime:#81c968;--coral:#ef6666;--cyan:#58bce6;--emerald:#33a36c;--panel:color-mix(in srgb,var(--vscode-editor-background) 88%,white);--edge:color-mix(in srgb,var(--vscode-foreground) 13%,transparent);--muted:var(--vscode-descriptionForeground)}
 *{box-sizing:border-box}body{margin:0;background:var(--vscode-editor-background);color:var(--vscode-foreground);font-family:Inter,var(--vscode-font-family);font-variant-numeric:tabular-nums}.shell{max-width:1500px;margin:auto;padding:16px 20px 22px}
 .overview{margin-bottom:12px;padding:11px 15px 13px;background:var(--panel);border:1px solid var(--edge);border-radius:9px;box-shadow:0 7px 20px #0001}.market-status{display:flex;align-items:center;gap:7px;min-width:0;margin-bottom:11px;font-size:13px}.phase{font-weight:700;flex:none}.overview-time{color:var(--muted);flex:none}.concepts{display:flex;align-items:center;gap:6px;min-width:0;margin-left:14px;font-size:12px}.concept-label{flex:none;color:var(--muted)}.concept-names{overflow:hidden;color:var(--vscode-foreground);text-overflow:ellipsis;white-space:nowrap}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px 54px}.metric-group{display:grid;grid-template-columns:minmax(70px,auto) 1fr;gap:7px 14px;align-items:baseline}.metric-label{color:var(--muted);font-size:12px}.metric-value{font-size:13px;font-weight:650}.rise{color:var(--rise)}.fall{color:var(--fall)}
-.terminal{background:var(--panel);border:1px solid var(--edge);border-radius:11px;overflow:hidden;box-shadow:0 9px 26px #0001}.bar{min-height:39px;display:flex;align-items:center;flex-wrap:wrap;padding:7px 14px;border-bottom:1px solid var(--edge);gap:5px}.tab{height:26px;padding:0 14px;border:0;border-radius:5px;background:transparent;color:var(--muted);cursor:pointer;font-size:12px;font-weight:600}.tab:hover{background:var(--edge);color:var(--vscode-foreground)}.tab.active{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}.legend{margin-left:auto;display:flex;flex-wrap:wrap;gap:10px;font-size:11px}.dot:before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px}.ma5:before{background:var(--blue)}.ma10:before{background:var(--lime)}.ma20:before{background:var(--gold)}.ma30:before{background:var(--coral)}.ma50:before{background:var(--cyan)}.ma250:before{background:var(--emerald)}.avg:before{background:var(--gold)}
+.market-body{display:grid;grid-template-columns:minmax(0,1fr) 190px;gap:12px;align-items:start}.terminal{min-width:0;background:var(--panel);border:1px solid var(--edge);border-radius:11px;overflow:hidden;box-shadow:0 9px 26px #0001}.bar{min-height:39px;display:flex;align-items:center;flex-wrap:wrap;padding:7px 14px;border-bottom:1px solid var(--edge);gap:5px}.tab{height:26px;padding:0 14px;border:0;border-radius:5px;background:transparent;color:var(--muted);cursor:pointer;font-size:12px;font-weight:600}.tab:hover{background:var(--edge);color:var(--vscode-foreground)}.tab.active{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}.legend{margin-left:auto;display:flex;flex-wrap:wrap;gap:10px;font-size:11px}.dot:before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px}.ma5:before{background:var(--blue)}.ma10:before{background:var(--lime)}.ma20:before{background:var(--gold)}.ma30:before{background:var(--coral)}.ma50:before{background:var(--cyan)}.ma250:before{background:var(--emerald)}.avg:before{background:var(--gold)}
+.order-book{background:var(--panel);border:1px solid var(--edge);border-radius:11px;overflow:hidden;box-shadow:0 9px 26px #0001}.order-title{height:39px;display:flex;align-items:center;justify-content:space-between;padding:0 12px;border-bottom:1px solid var(--edge);font-size:12px;font-weight:700}.order-snapshot{color:var(--muted);font-size:10px;font-weight:400}.order-head,.order-row{display:grid;grid-template-columns:34px minmax(0,1fr) minmax(0,1fr);align-items:center;padding:0 10px;column-gap:7px}.order-head{height:27px;color:var(--muted);font-size:10px}.order-row{height:33px;border-top:1px solid color-mix(in srgb,var(--edge) 55%,transparent);font-size:11px}.order-row span:nth-child(2),.order-row span:nth-child(3){text-align:right}.order-label.buy{color:var(--rise)}.order-label.sell{color:var(--fall)}.order-divider{height:34px;display:flex;align-items:center;justify-content:center;border-top:1px solid var(--edge);border-bottom:1px solid var(--edge);font-size:13px;font-weight:700}.order-empty{height:374px;display:grid;place-items:center;padding:12px;color:var(--muted);font-size:11px;text-align:center}
 .chart{position:relative;height:420px;padding:8px}.chart svg{width:100%;height:100%;display:block}.empty{height:100%;display:grid;place-items:center;color:var(--muted)}.tip{position:absolute;display:none;pointer-events:none;background:color-mix(in srgb,var(--vscode-editor-background) 94%,transparent);border:1px solid var(--edge);border-radius:6px;padding:7px 9px;box-shadow:0 6px 17px #0004;font-size:11px;line-height:1.6;z-index:3}
 .range-wrap{display:${period === 'minute' || period === 'fiveDay' ? 'none' : 'block'};padding:0 21px 14px}.range-title{font-size:10px;color:var(--muted);margin-bottom:6px}.range{height:36px;position:relative;border-radius:5px;background:color-mix(in srgb,var(--blue) 8%,var(--vscode-editor-background));overflow:hidden;touch-action:none;cursor:crosshair}.spark{position:absolute;inset:4px;opacity:.55}.shade{position:absolute;top:0;bottom:0;background:#0005;pointer-events:none}.selection{position:absolute;top:0;bottom:0;border:1px solid var(--blue);background:#4aa8ff16;cursor:grab}.selection:active{cursor:grabbing}.handle{position:absolute;top:0;bottom:0;width:7px;background:var(--blue);cursor:ew-resize}.handle.left{left:-3px}.handle.right{right:-3px}.dates{display:flex;justify-content:space-between;color:var(--muted);font-size:9px;margin-top:4px}
-@media(max-width:800px){.shell{padding:9px}.metrics{grid-template-columns:1fr;gap:9px}.chart{height:338px}.legend{width:100%;margin-left:4px}.tab{padding:0 9px}}
+@media(max-width:700px){.market-body{grid-template-columns:1fr}.order-book{width:190px;justify-self:end}}@media(max-width:800px){.shell{padding:9px}.metrics{grid-template-columns:1fr;gap:9px}.chart{height:338px}.legend{width:100%;margin-left:4px}.tab{padding:0 9px}}
 </style></head><body><main class="shell">
 <section class="overview"><div class="market-status"><span class="phase">${phaseText}</span><span class="overview-time">${esc(timeText)}</span><span class="concepts"><span class="concept-label">所属概念</span><span class="concept-names" title="${esc(conceptText)}">${esc(conceptText)}</span></span></div><div class="metrics">
 <div class="metric-group"><span class="metric-label">今开</span><strong class="metric-value ${priceTone(this.quote.open, this.quote.previousClose)}">${priceValue(this.quote.open)}</strong><span class="metric-label">昨收</span><strong class="metric-value">${priceValue(this.quote.previousClose)}</strong><span class="metric-label">换手率</span><strong class="metric-value">${percentValue(this.quote.turnoverRate)}</strong></div>
 <div class="metric-group"><span class="metric-label">最高</span><strong class="metric-value ${priceTone(this.quote.high, this.quote.previousClose)}">${priceValue(this.quote.high)}</strong><span class="metric-label">最低</span><strong class="metric-value ${priceTone(this.quote.low, this.quote.previousClose)}">${priceValue(this.quote.low)}</strong><span class="metric-label">市盈(TTM)</span><strong class="metric-value">${numberValue(this.quote.peTTM)}</strong></div>
 <div class="metric-group"><span class="metric-label">成交量</span><strong class="metric-value">${handsValue(this.quote.volume)}</strong><span class="metric-label">成交额</span><strong class="metric-value">${moneyValue(this.quote.amount)}</strong><span class="metric-label">总市值</span><strong class="metric-value">${marketCapValue(this.quote.totalMarketCap)}</strong></div>
 </div></section>
-<section class="terminal"><div class="bar"><button class="tab ${period === 'minute' ? 'active' : ''}" data-period="minute">分时</button><button class="tab ${period === 'fiveDay' ? 'active' : ''}" data-period="fiveDay">五日</button><button class="tab ${period === 'day' ? 'active' : ''}" data-period="day">日 K</button><button class="tab ${period === 'week' ? 'active' : ''}" data-period="week">周 K</button><button class="tab ${period === 'month' ? 'active' : ''}" data-period="month">月 K</button><button class="tab ${period === '5min' ? 'active' : ''}" data-period="5min">5 分</button><div class="legend">${period === 'minute' || period === 'fiveDay' ? '<span class="dot avg">均价</span>' : '<span class="dot ma5">MA5</span><span class="dot ma10">MA10</span><span class="dot ma20">MA20</span><span class="dot ma30">MA30</span><span class="dot ma50">MA50</span><span class="dot ma250">MA250</span>'}</div></div>
+<div class="market-body"><section class="terminal"><div class="bar"><button class="tab ${period === 'minute' ? 'active' : ''}" data-period="minute">分时</button><button class="tab ${period === 'fiveDay' ? 'active' : ''}" data-period="fiveDay">五日</button><button class="tab ${period === 'day' ? 'active' : ''}" data-period="day">日 K</button><button class="tab ${period === 'week' ? 'active' : ''}" data-period="week">周 K</button><button class="tab ${period === 'month' ? 'active' : ''}" data-period="month">月 K</button><button class="tab ${period === '5min' ? 'active' : ''}" data-period="5min">5 分</button><div class="legend">${period === 'minute' || period === 'fiveDay' ? '<span class="dot avg">均价</span>' : '<span class="dot ma5">MA5</span><span class="dot ma10">MA10</span><span class="dot ma20">MA20</span><span class="dot ma30">MA30</span><span class="dot ma50">MA50</span><span class="dot ma250">MA250</span>'}</div></div>
 <div id="chart" class="chart">${message ? `<div class="empty">${esc(message)}</div>` : ''}<div id="tip" class="tip"></div></div>
-<div class="range-wrap"><div class="range-title">拖动蓝色选区移动日期范围，拖动两侧手柄缩放</div><div id="range" class="range"><svg id="spark" class="spark"></svg><div id="shadeL" class="shade"></div><div id="shadeR" class="shade"></div><div id="selection" class="selection"><i class="handle left" data-handle="left"></i><i class="handle right" data-handle="right"></i></div></div><div class="dates"><span id="dateL">--</span><span id="dateR">--</span></div></div></section>
+<div class="range-wrap"><div class="range-title">拖动蓝色选区移动日期范围，拖动两侧手柄缩放</div><div id="range" class="range"><svg id="spark" class="spark"></svg><div id="shadeL" class="shade"></div><div id="shadeR" class="shade"></div><div id="selection" class="selection"><i class="handle left" data-handle="left"></i><i class="handle right" data-handle="right"></i></div></div><div class="dates"><span id="dateL">--</span><span id="dateR">--</span></div></div></section><aside id="orderBook" class="order-book">${orderBookHtml}</aside></div>
 </main><script nonce="${nonce}">
 const vscode=acquireVsCodeApi(),payload=${data},stockName=${nameData},mode='${period}',all=payload.candles||[],maDefs=[{n:5,c:'var(--blue)'},{n:10,c:'var(--lime)'},{n:20,c:'var(--gold)'},{n:30,c:'var(--coral)'},{n:50,c:'var(--cyan)'},{n:250,c:'var(--emerald)'}];let start=Math.max(0,all.length-60),end=all.length-1;
 document.querySelectorAll('[data-period]').forEach(b=>b.onclick=()=>vscode.postMessage({type:'period',value:b.dataset.period}));
+window.addEventListener('message',event=>{if(event.data?.type==='orderBook'){const target=document.getElementById('orderBook');if(target)target.innerHTML=event.data.html}});
 const chart=document.getElementById('chart'),tip=document.getElementById('tip'),minuteMode=mode==='minute'||mode==='fiveDay';if(minuteMode&&payload.points?.length)drawMinute(payload.points,payload.previousClose,mode==='fiveDay');else if(all.length){setupRange();drawK()}
 function base(vals){const W=1200,H=530,p={l:78,r:78,t:28,b:70},vol=94,sep=24,pb=H-p.b-vol-sep,lo=Math.min(...vals),hi=Math.max(...vals),rg=hi-lo||Math.max(Math.abs(hi)*.01,.01);return{W,H,p,vol,pb,lo,hi,rg,y:v=>p.t+(hi-v)/rg*(pb-p.t)}}
 function grid(b){let s='';for(let i=0;i<5;i++){let yy=b.p.t+i*(b.pb-b.p.t)/4,v=b.hi-i*b.rg/4;s+='<line x1="'+b.p.l+'" x2="'+(b.W-b.p.r)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--edge)"/><text x="'+(b.p.l-9)+'" y="'+(yy+4)+'" text-anchor="end" fill="var(--muted)" font-size="11">'+v.toFixed(2)+'</text>'}return s}
@@ -244,4 +312,29 @@ function moneyValue(value: number | undefined): string {
 
 function marketCapValue(value: number | undefined): string {
   return Number.isFinite(value) ? `${(value! / 1e8).toFixed(2)}亿` : '--';
+}
+
+function renderOrderBook(orderBook: OrderBook | undefined, previousClose: number, currentPrice: number): string {
+  if (orderBook === undefined) {
+    return '<div class="order-title"><span>买卖五档</span><span class="order-snapshot">实时</span></div><div class="order-empty">五档加载中…</div>';
+  }
+  if (!orderBook.bids.length && !orderBook.asks.length) {
+    return '<div class="order-title"><span>买卖五档</span><span class="order-snapshot">自动重试</span></div><div class="order-empty">暂无五档数据</div>';
+  }
+  const empty: OrderBookLevel = { price: 0, volume: 0 };
+  const bids = Array.from({ length: 5 }, (_, index) => orderBook.bids[index] ?? empty);
+  const asks = Array.from({ length: 5 }, (_, index) => orderBook.asks[index] ?? empty);
+  const row = (label: string, side: 'buy' | 'sell', level: OrderBookLevel) => `<div class="order-row"><span class="order-label ${side}">${label}</span><span class="${priceTone(level.price, previousClose)}">${priceValue(level.price)}</span><span>${orderHandsValue(level.volume)}</span></div>`;
+  const askRows = asks.map((level, index) => ({ level, number: index + 1 })).reverse()
+    .map(item => row(`卖${item.number}`, 'sell', item.level)).join('');
+  const bidRows = bids.map((level, index) => row(`买${index + 1}`, 'buy', level)).join('');
+  const displayedPrice = orderBook.currentPrice || currentPrice;
+  const snapshotTime = orderBook.time || '实时';
+  return `<div class="order-title"><span>买卖五档</span><span class="order-snapshot">${esc(snapshotTime)}</span></div><div class="order-head"><span>档位</span><span>价格</span><span>手数</span></div>${askRows}<div class="order-divider ${priceTone(displayedPrice, previousClose)}">${priceValue(displayedPrice)}</div>${bidRows}`;
+}
+
+function orderHandsValue(shares: number): string {
+  if (!Number.isFinite(shares) || shares <= 0) return '--';
+  const hands = shares / 100;
+  return hands >= 10_000 ? `${(hands / 10_000).toFixed(2)}万` : hands.toFixed(0);
 }

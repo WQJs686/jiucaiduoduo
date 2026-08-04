@@ -20,6 +20,21 @@ export interface Quote {
   time: string;
 }
 
+export interface OrderBookLevel {
+  price: number;
+  /** 新浪行情返回的委托数量，单位为股。 */
+  volume: number;
+}
+
+export interface OrderBook {
+  /** 买一到买五。 */
+  bids: OrderBookLevel[];
+  /** 卖一到卖五。 */
+  asks: OrderBookLevel[];
+  currentPrice: number;
+  time: string;
+}
+
 export interface StockSearchResult { name: string; code: string; symbol: string; }
 export type MarketPhase = 'call-auction' | 'pre-open' | 'continuous' | 'closed';
 
@@ -49,6 +64,23 @@ export function parseSinaResponse(body: string): Quote[] {
     });
   }
   return quotes;
+}
+
+export function parseSinaOrderBookResponse(body: string, symbol: string): OrderBook | undefined {
+  const match = body.match(new RegExp(`var\\s+hq_str_${symbol}="([^"]*)"`));
+  if (!match) return undefined;
+  const fields = match[1].split(',');
+  if (!fields[0] || fields.length < 32) return undefined;
+  const level = (volumeIndex: number, priceIndex: number): OrderBookLevel => ({
+    volume: Number(fields[volumeIndex]) || 0,
+    price: Number(fields[priceIndex]) || 0
+  });
+  return {
+    bids: [level(10, 11), level(12, 13), level(14, 15), level(16, 17), level(18, 19)],
+    asks: [level(20, 21), level(22, 23), level(24, 25), level(26, 27), level(28, 29)],
+    currentPrice: Number(fields[3]) || 0,
+    time: fields[31] || ''
+  };
 }
 
 export function marketPhase(now = new Date()): MarketPhase {
@@ -177,6 +209,19 @@ export async function fetchQuotes(symbols: string[]): Promise<Quote[]> {
       totalMarketCap: detail?.totalMarketCap
     };
   });
+}
+
+/** 获取当前买卖五档快照，由详情页控制轮询频率。 */
+export async function fetchOrderBook(symbol: string): Promise<OrderBook> {
+  const response = await fetch(`https://hq.sinajs.cn/list=${symbol}`, {
+    headers: { Referer: 'https://finance.sina.com.cn/', 'User-Agent': 'VSCode-A-Share-Quotes/0.2' }
+  });
+  if (!response.ok) throw new Error(`新浪财经五档接口返回 HTTP ${response.status}`);
+  const buffer = await response.arrayBuffer();
+  const body = new TextDecoder('gb18030').decode(buffer);
+  const orderBook = parseSinaOrderBookResponse(body, symbol);
+  if (!orderBook) throw new Error('暂时没有买卖五档数据');
+  return orderBook;
 }
 
 export async function searchStocks(keyword: string): Promise<StockSearchResult[]> {
