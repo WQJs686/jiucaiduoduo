@@ -283,8 +283,8 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!items) {
       const main = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100 - index * 2);
       const change = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99 - index * 2);
-      main.name = `拔韭菜 ${index + 1}`;
-      change.name = `拔韭菜 ${index + 1} 涨跌幅`;
+      main.name = `韭菜王 ${index + 1}`;
+      change.name = `韭菜王 ${index + 1} 涨跌幅`;
       main.command = 'aShareQuotes.selectStatusStock';
       change.command = 'aShareQuotes.selectStatusStock';
       items = { main, change };

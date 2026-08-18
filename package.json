@@ -1,8 +1,8 @@
 {
   "name": "a-share-quotes",
-  "displayName": "拔韭菜",
+  "displayName": "韭菜王",
   "description": "在 VS Code 状态栏和侧边栏查看股票与可转债实时行情。",
-  "version": "0.2.11",
+  "version": "0.2.15",
   "publisher": "wangqj",
   "icon": "resources/icon.png",
   "engines": {
@@ -13,26 +13,26 @@
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      { "command": "aShareQuotes.refresh", "title": "拔韭菜: 立即刷新", "icon": "$(refresh)" },
-      { "command": "aShareQuotes.addStock", "title": "拔韭菜: 添加股票", "icon": "$(add)" },
-      { "command": "aShareQuotes.addGroup", "title": "拔韭菜: 新增分组", "icon": "$(new-folder)" },
-      { "command": "aShareQuotes.sortGroup", "title": "拔韭菜: 切换涨跌幅排序" },
+      { "command": "aShareQuotes.refresh", "title": "韭菜王: 立即刷新", "icon": "$(refresh)" },
+      { "command": "aShareQuotes.addStock", "title": "韭菜王: 添加股票", "icon": "$(add)" },
+      { "command": "aShareQuotes.addGroup", "title": "韭菜王: 新增分组", "icon": "$(new-folder)" },
+      { "command": "aShareQuotes.sortGroup", "title": "韭菜王: 切换涨跌幅排序" },
       { "command": "aShareQuotes.sortGroupManual", "title": "当前：默认顺序（点击按涨幅降序）", "icon": "$(list-ordered)" },
       { "command": "aShareQuotes.sortGroupDesc", "title": "当前：涨幅从高到低（点击按涨幅升序）", "icon": "$(arrow-down)" },
       { "command": "aShareQuotes.sortGroupAsc", "title": "当前：涨幅从低到高（点击恢复默认）", "icon": "$(arrow-up)" },
-      { "command": "aShareQuotes.addToGroup", "title": "拔韭菜: 添加到分组…", "icon": "$(folder-library)" },
-      { "command": "aShareQuotes.deleteGroup", "title": "拔韭菜: 删除分组", "icon": "$(trash)" },
-      { "command": "aShareQuotes.removeStock", "title": "拔韭菜: 删除自选证券", "icon": "$(trash)" },
-      { "command": "aShareQuotes.selectStatusStock", "title": "拔韭菜: 固定到状态栏", "icon": "$(pin)" },
-      { "command": "aShareQuotes.unpinStatusStock", "title": "拔韭菜: 取消状态栏固定", "icon": "$(pinned)" },
-      { "command": "aShareQuotes.moveUp", "title": "拔韭菜: 向上移动一级", "icon": "$(arrow-up)" },
-      { "command": "aShareQuotes.moveDown", "title": "拔韭菜: 向下移动一级", "icon": "$(arrow-down)" },
-      { "command": "aShareQuotes.moveTop", "title": "拔韭菜: 置顶", "icon": "$(fold-up)" },
-      { "command": "aShareQuotes.moveBottom", "title": "拔韭菜: 置底", "icon": "$(fold-down)" }
+      { "command": "aShareQuotes.addToGroup", "title": "韭菜王: 添加到分组…", "icon": "$(folder-library)" },
+      { "command": "aShareQuotes.deleteGroup", "title": "韭菜王: 删除分组", "icon": "$(trash)" },
+      { "command": "aShareQuotes.removeStock", "title": "韭菜王: 删除自选证券", "icon": "$(trash)" },
+      { "command": "aShareQuotes.selectStatusStock", "title": "韭菜王: 固定到状态栏", "icon": "$(pin)" },
+      { "command": "aShareQuotes.unpinStatusStock", "title": "韭菜王: 取消状态栏固定", "icon": "$(pinned)" },
+      { "command": "aShareQuotes.moveUp", "title": "韭菜王: 向上移动一级", "icon": "$(arrow-up)" },
+      { "command": "aShareQuotes.moveDown", "title": "韭菜王: 向下移动一级", "icon": "$(arrow-down)" },
+      { "command": "aShareQuotes.moveTop", "title": "韭菜王: 置顶", "icon": "$(fold-up)" },
+      { "command": "aShareQuotes.moveBottom", "title": "韭菜王: 置底", "icon": "$(fold-down)" }
     ],
     "viewsContainers": {
       "activitybar": [
-        { "id": "aShareQuotes", "title": "拔韭菜", "icon": "resources/activity.svg" }
+        { "id": "aShareQuotes", "title": "韭菜王", "icon": "resources/activity.svg" }
       ]
     },
     "views": {
@@ -70,7 +70,7 @@
       ]
     },
     "configuration": {
-      "title": "拔韭菜",
+      "title": "韭菜王",
       "properties": {
         "aShareQuotes.symbols": {
           "type": "array",
@@ -114,7 +114,7 @@
           "type": "string",
           "default": "sh000001",
           "description": "旧版单个状态栏证券代码。",
-          "deprecationMessage": "请改用拔韭菜: Status Bar Symbols，可固定最多 5 个证券。"
+          "deprecationMessage": "请改用韭菜王: Status Bar Symbols，可固定最多 5 个证券。"
         }
       }
     }
